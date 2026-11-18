@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Стела Нефтика</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #000;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Arial', 'Roboto', sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .screen-half {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border-bottom: 2px solid #2bb3f3;
+    }
+    .screen-half:last-child { border-bottom: none; }
+
+    .banner {
+      height: 33%;
+      background: linear-gradient(180deg, #43b7f4 0%, #68d0ff 50%, #3aa8e8 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 1.5vh 3vw;
+    }
+    .banner img {
+      max-height: 100%;
+      max-width: 100%;
+      object-fit: contain;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      opacity: 1;
+      transition: opacity 0.5s ease-in-out;
+    }
+    .banner img.fade-out {
+      opacity: 0;
+    }
+
+    .price-board {
+      flex: 1;
+      background: #060a38;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-evenly;
+      padding: 1vh 6vw;
+    }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .fuel-box {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .fuel-top {
+      display: flex;
+      align-items: flex-start;
+    }
+
+    .fuel-name {
+      color: #ffffff;
+      font-size: 4.2vh;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .leaf {
+      width: 1.1vh;
+      height: 2.2vh;
+      margin-left: 0.6vw;
+      border-radius: 0 60% 0 60%;
+      transform: skewX(-12deg);
+    }
+    .leaf.red { background: #e31e24; }
+    .leaf.green { background: #8ec63f; }
+    .leaf.white { background: #ffffff; }
+    .leaf.yellow { background: #ffd500; }
+
+    .note {
+      color: #e31e24;
+      font-size: 1.8vh;
+      font-weight: 800;
+      text-transform: uppercase;
+      margin-top: 0.3vh;
+      letter-spacing: 0.5px;
+    }
+
+    .price {
+      color: #ffffff;
+      font-size: 5.2vh;
+      font-weight: 800;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -1px;
+    }
+
+    #status-msg {
+      position: fixed;
+      bottom: 6px;
+      right: 10px;
+      color: rgba(255, 255, 255, 0.65);
+      font-size: 12px;
+      z-index: 99;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="screen-half">
+    <div class="banner"><img class="banner-img" src="card.png" alt="Баннер Нефтика"></div>
+    <div class="price-board" id="board-1"></div>
+  </div>
+
+  <div class="screen-half">
+    <div class="banner"><img class="banner-img" src="card.png" alt="Баннер Нефтика"></div>
+    <div class="price-board" id="board-2"></div>
+  </div>
+
+  <div id="status-msg">Загрузка таблицы...</div>
+
+  <script>
+    var GOOGLE_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTZ9WPm98YkW_QghM_f82RHu3l7ddsEXZDeUFZNcccajpRByfQQE7BfV_s47bR5BIP-y68YdfkoqxQ_/pub?gid=0&single=true&output=csv';
+    var STORAGE_KEY = 'neftika_csv_cache_v5';
+    var LOCAL_FALLBACK_IMAGE = 'card.png';
+
+    var bannerIntervalMs = 5000;
+    var updateIntervalMs = 30000;
+
+    var activeBannerImages = [];
+    var currentBannerIndex = 0;
+    var bannerTimer = null;
+    var updateTimer = null;
+
+    function setStatus(text) {
+      var el = document.getElementById('status-msg');
+      if (el) el.textContent = text;
+    }
+
+    function getAt(arr, index) {
+      if (!arr || index < 0 || index >= arr.length) return '';
+      return arr.slice(index, index + 1).pop();
+    }
+
+    function getCell(arr, index) {
+      var val = getAt(arr, index);
+      return val !== undefined && val !== null ? String(val).trim().replace(/^"|"$/g, '') : '';
+    }
+
+    function toGithubRawUrl(url) {
+      if (!url) return '';
+      var clean = String(url).trim().replace(/^"|"$/g, '');
+      clean = clean.replace(/[?&]raw=true/i, '');
+      if (clean.indexOf('://github.com/') !== -1 && clean.indexOf('/blob/') !== -1) {
+        clean = clean
+          .replace('://github.com/', '://raw.githubusercontent.com/')
+          .replace('/blob/', '/');
+      }
+      return clean;
+    }
+
+    function applySrcToBanners(finalSrc) {
+      var imgs = document.querySelectorAll('.banner-img');
+      for (var i = 0; i < imgs.length; i++) {
+        imgs.item(i).classList.add('fade-out');
+      }
+      setTimeout(function () {
+        for (var i = 0; i < imgs.length; i++) {
+          var img = imgs.item(i);
+          img.src = finalSrc;
+          img.classList.remove('fade-out');
+        }
+      }, 500);
+    }
+
+    function switchBannerSafely(rawUrl) {
+      var cleanUrl = toGithubRawUrl(rawUrl);
+
+      if (!cleanUrl || !/^https?:\/\//i.test(cleanUrl)) {
+        applySrcToBanners(cleanUrl || LOCAL_FALLBACK_IMAGE);
+        return;
+      }
+
+      var tester = new Image();
+      tester.onload = function () {
+        applySrcToBanners(cleanUrl);
+      };
+      tester.onerror = function () {
+        applySrcToBanners(LOCAL_FALLBACK_IMAGE);
+      };
+      tester.src = cleanUrl;
+    }
+
+    function updateBannerList(newImages, newBannerMs) {
+      var list = newImages.length > 0 ? newImages : [LOCAL_FALLBACK_IMAGE];
+      var listChanged = list.join('|') !== activeBannerImages.join('|');
+      var intervalChanged = newBannerMs !== bannerIntervalMs;
+
+      bannerIntervalMs = newBannerMs;
+
+      if (listChanged) {
+        activeBannerImages = list;
+        currentBannerIndex = 0;
+        switchBannerSafely(getAt(activeBannerImages, 0));
+      } else if (activeBannerImages.length === 1) {
+        switchBannerSafely(getAt(activeBannerImages, 0));
+      }
+
+      if (listChanged || intervalChanged) {
+        if (bannerTimer) {
+          clearInterval(bannerTimer);
+          bannerTimer = null;
+        }
+        if (activeBannerImages.length > 1) {
+          bannerTimer = setInterval(function () {
+            currentBannerIndex = (currentBannerIndex + 1) % activeBannerImages.length;
+            switchBannerSafely(getAt(activeBannerImages, currentBannerIndex));
+          }, bannerIntervalMs);
+        }
+      }
+    }
+
+    function restartUpdateTimer(newUpdateMs) {
+      if (newUpdateMs === updateIntervalMs && updateTimer) return;
+      updateIntervalMs = newUpdateMs;
+
+      if (updateTimer) {
+        clearInterval(updateTimer);
+      }
+      updateTimer = setInterval(updatePrices, updateIntervalMs);
+    }
+
+    function hasValidPrice(rawPrice) {
+      if (!rawPrice) return false;
+      var cleaned = String(rawPrice).trim();
+      if (!cleaned || cleaned === '-' || cleaned === '—') return false;
+      var numeric = parseFloat(cleaned.replace(',', '.').replace(/[^\d.]/g, ''));
+      return !isNaN(numeric) && numeric > 0;
+    }
+
+    function formatPrice(rawPrice) {
+      var str = String(rawPrice).trim().replace(',', '.');
+      var num = parseFloat(str);
+      return !isNaN(num) ? num.toFixed(2) : str;
+    }
+
+    function buildRows(items) {
+      var html = '';
+      for (var i = 0; i < items.length; i++) {
+        var item = getAt(items, i);
+        html += '<div class="row">' +
+          '<div class="fuel-box">' +
+            '<div class="fuel-top">' +
+              '<span class="fuel-name">' + item.fuel + '</span>' +
+              (item.tag ? '<span class="leaf ' + item.tag + '"></span>' : '') +
+            '</div>' +
+            (item.note ? '<span class="note">' + item.note + '</span>' : '') +
+          '</div>' +
+          '<div class="price">' + item.price + '</div>' +
+        '</div>';
+      }
+      return html;
+    }
+
+    function parseCsvLine(line) {
+      var result = [];
+      var cur = '';
+      var inQuotes = false;
+      for (var i = 0; i < line.length; i++) {
+        var ch = line.charAt(i);
+        if (ch === '"') {
+          inQuotes = !inQuotes;
+        } else if (ch === ',' && !inQuotes) {
+          result.push(cur);
+          cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      result.push(cur);
+      return result;
+    }
+
+    function render(csvText) {
+      if (!csvText || csvText.indexOf('fuel') === -1) return false;
+      var lines = csvText.trim().split(/\r?\n/);
+      var items = [];
+      var parsedBanners = [];
+      var nextBannerMs = bannerIntervalMs;
+      var nextUpdateMs = updateIntervalMs;
+
+      for (var i = 1; i < lines.length; i++) {
+        var cols = parseCsvLine(getAt(lines, i));
+        var fuel = getCell(cols, 0);
+        var tag = getCell(cols, 1).toLowerCase();
+        var note = getCell(cols, 2);
+        var price = getCell(cols, 3);
+        var imgUrl = getCell(cols, 4);
+        var bannerSec = parseFloat(getCell(cols, 5).replace(',', '.'));
+        var updateSec = parseFloat(getCell(cols, 6).replace(',', '.'));
+
+        if (imgUrl && /^https?:\/\//i.test(imgUrl)) {
+          parsedBanners.push(imgUrl);
+        }
+
+        if (i === 1) {
+          if (!isNaN(bannerSec) && bannerSec >= 2) {
+            nextBannerMs = bannerSec * 1000;
+          }
+          if (!isNaN(updateSec) && updateSec >= 5) {
+            nextUpdateMs = updateSec * 1000;
+          }
+        }
+
+        if (fuel && hasValidPrice(price)) {
+          items.push({
+            fuel: fuel,
+            tag: tag,
+            note: note,
+            price: formatPrice(price)
+          });
+        }
+      }
+
+      if (items.length > 0) {
+        var rowsHtml = buildRows(items);
+        document.getElementById('board-1').innerHTML = rowsHtml;
+        document.getElementById('board-2').innerHTML = rowsHtml;
+        setStatus('');
+      }
+
+      updateBannerList(parsedBanners, nextBannerMs);
+      restartUpdateTimer(nextUpdateMs);
+      return items.length > 0;
+    }
+
+    function tryUrlsSequentially(urls, index) {
+      if (index >= urls.length) {
+        setStatus('Нет доступа к Google Таблице');
+        return;
+      }
+
+      var currentUrl = getAt(urls, index);
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', currentUrl, true);
+      xhr.timeout = 8000;
+
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText && xhr.responseText.indexOf('fuel') !== -1) {
+          try {
+            localStorage.setItem(STORAGE_KEY, xhr.responseText);
+          } catch (e) {}
+          render(xhr.responseText);
+        } else {
+          tryUrlsSequentially(urls, index + 1);
+        }
+      };
+
+      xhr.onerror = function () {
+        tryUrlsSequentially(urls, index + 1);
+      };
+
+      xhr.ontimeout = function () {
+        tryUrlsSequentially(urls, index + 1);
+      };
+
+      xhr.send();
+    }
+
+    function updatePrices() {
+      var rawTarget = GOOGLE_CSV_URL + '&nocache=' + Date.now();
+      var candidates = [
+        rawTarget,
+        'https://corsproxy.io/?' + encodeURIComponent(rawTarget),
+        'https://api.allorigins.win/raw?url=' + encodeURIComponent(rawTarget)
+      ];
+      tryUrlsSequentially(candidates, 0);
+    }
+
+    (function init() {
+      try {
+        var cached = localStorage.getItem(STORAGE_KEY);
+        if (cached) {
+          render(cached);
+        }
+      } catch (e) {}
+
+      updatePrices();
+      updateTimer = setInterval(updatePrices, updateIntervalMs);
+    })();
+  </script>
+</body>
+</html>
