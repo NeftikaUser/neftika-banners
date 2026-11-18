@@ -2,8 +2,11 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>Стела Нефтика</title>
+  <title>Стела АЗС</title>
   <style>
+    /* ==========================================================================
+       1. БАЗОВЫЕ НАСТРОЙКИ ЭКРАНА И РАЗДЕЛЕНИЕ НА ДВЕ ПОЛОВИНЫ
+       ========================================================================== */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: #000;
@@ -15,6 +18,7 @@
       flex-direction: column;
     }
 
+    /* Верхний и нижний дублирующие экраны стелы */
     .screen-half {
       flex: 1;
       display: flex;
@@ -23,6 +27,9 @@
     }
     .screen-half:last-child { border-bottom: none; }
 
+    /* ==========================================================================
+       2. БЛОК РЕКЛАМНЫХ БАННЕРОВ
+       ========================================================================== */
     .banner {
       height: 33%;
       background: linear-gradient(180deg, #43b7f4 0%, #68d0ff 50%, #3aa8e8 100%);
@@ -40,10 +47,14 @@
       opacity: 1;
       transition: opacity 0.5s ease-in-out;
     }
+    /* Класс для плавного затухания при смене слайда */
     .banner img.fade-out {
       opacity: 0;
     }
 
+    /* ==========================================================================
+       3. ТАБЛО С ЦЕНАМИ НА ТОПЛИВО
+       ========================================================================== */
     .price-board {
       flex: 1;
       background: #060a38;
@@ -53,12 +64,14 @@
       padding: 1vh 6vw;
     }
 
+    /* Строка позиции: align-items: flex-start выравнивает название и цену по верхнему краю */
     .row {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
     }
 
+    /* Левый контейнер: название марки + цветной индикатор + нижняя подпись */
     .fuel-box {
       display: flex;
       flex-direction: column;
@@ -77,6 +90,7 @@
       line-height: 1;
     }
 
+    /* Цветной лепесток справа от названия марки */
     .leaf {
       width: 1.1vh;
       height: 2.2vh;
@@ -89,6 +103,7 @@
     .leaf.white { background: #ffffff; }
     .leaf.yellow { background: #ffd500; }
 
+    /* Дополнительная подпись под маркой топлива (например, СКИДКА или -17) */
     .note {
       color: #e31e24;
       font-size: 1.8vh;
@@ -98,6 +113,7 @@
       letter-spacing: 0.5px;
     }
 
+    /* Правый блок: цена топлива */
     .price {
       color: #ffffff;
       font-size: 5.2vh;
@@ -107,6 +123,9 @@
       letter-spacing: -1px;
     }
 
+    /* ==========================================================================
+       4. ТЕХНИЧЕСКИЙ ИНДИКАТОР СТАТУСА ЗАГРУЗКИ
+       ========================================================================== */
     #status-msg {
       position: fixed;
       bottom: 6px;
@@ -120,47 +139,59 @@
 </head>
 <body>
 
+  <!-- ==========================================================================
+       5. HTML-РАЗМЕТКА ДВУХ СИНХРОННЫХ БЛОКОВ СТЕЛЫ
+       ========================================================================== -->
   <div class="screen-half">
-    <div class="banner"><img class="banner-img" src="card.png" alt="Баннер Нефтика"></div>
+    <div class="banner"><img class="banner-img" src="card.png" alt="Рекламный баннер"></div>
     <div class="price-board" id="board-1"></div>
   </div>
 
   <div class="screen-half">
-    <div class="banner"><img class="banner-img" src="card.png" alt="Баннер Нефтика"></div>
+    <div class="banner"><img class="banner-img" src="card.png" alt="Рекламный баннер"></div>
     <div class="price-board" id="board-2"></div>
   </div>
 
   <div id="status-msg">Загрузка таблицы...</div>
 
   <script>
-    var GOOGLE_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTZ9WPm98YkW_QghM_f82RHu3l7ddsEXZDeUFZNcccajpRByfQQE7BfV_s47bR5BIP-y68YdfkoqxQ_/pub?gid=0&single=true&output=csv';
-    var STORAGE_KEY = 'neftika_csv_cache_v5';
-    var LOCAL_FALLBACK_IMAGE = 'card.png';
+    /* ==========================================================================
+       6. КОНФИГУРАЦИЯ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+       ========================================================================== */
+    var SOURCE_CSV_URL = 'https://docs.google.com/'; //ссылка на опубликованный csv-документ гугл-таблицы
+    var CACHE_STORAGE_KEY = 'gas_station_board_cache_v1';
+    var FALLBACK_BANNER_IMG = 'card.png';
 
-    var bannerIntervalMs = 5000;
-    var updateIntervalMs = 30000;
+    var bannerSwitchIntervalMs = 5000;
+    var dataRefreshIntervalMs = 30000;
 
-    var activeBannerImages = [];
-    var currentBannerIndex = 0;
-    var bannerTimer = null;
-    var updateTimer = null;
+    var bannerList = [];
+    var activeBannerIdx = 0;
+    var bannerRotationTimer = null;
+    var dataRefreshTimer = null;
 
+    /* Обновление текста служебного статуса в углу экрана */
     function setStatus(text) {
       var el = document.getElementById('status-msg');
       if (el) el.textContent = text;
     }
 
+    /* Безопасное получение элемента массива по индексу */
     function getAt(arr, index) {
       if (!arr || index < 0 || index >= arr.length) return '';
       return arr.slice(index, index + 1).pop();
     }
 
+    /* Очистка значения ячейки CSV от лишних пробелов и внешних кавычек */
     function getCell(arr, index) {
       var val = getAt(arr, index);
       return val !== undefined && val !== null ? String(val).trim().replace(/^"|"$/g, '') : '';
     }
 
-    function toGithubRawUrl(url) {
+    /* ==========================================================================
+       7. РАБОТА С БАННЕРАМИ И ПРЕОБРАЗОВАНИЕ ССЫЛОК GITHUB
+       ========================================================================== */
+    function toDirectImageUrl(url) {
       if (!url) return '';
       var clean = String(url).trim().replace(/^"|"$/g, '');
       clean = clean.replace(/[?&]raw=true/i, '');
@@ -172,6 +203,7 @@
       return clean;
     }
 
+    /* Плавная замена изображения сразу в обоих баннерах */
     function applySrcToBanners(finalSrc) {
       var imgs = document.querySelectorAll('.banner-img');
       for (var i = 0; i < imgs.length; i++) {
@@ -186,11 +218,12 @@
       }, 500);
     }
 
+    /* Предзагрузка изображения перед показом (защита от битых ссылок) */
     function switchBannerSafely(rawUrl) {
-      var cleanUrl = toGithubRawUrl(rawUrl);
+      var cleanUrl = toDirectImageUrl(rawUrl);
 
       if (!cleanUrl || !/^https?:\/\//i.test(cleanUrl)) {
-        applySrcToBanners(cleanUrl || LOCAL_FALLBACK_IMAGE);
+        applySrcToBanners(cleanUrl || FALLBACK_BANNER_IMG);
         return;
       }
 
@@ -199,50 +232,55 @@
         applySrcToBanners(cleanUrl);
       };
       tester.onerror = function () {
-        applySrcToBanners(LOCAL_FALLBACK_IMAGE);
+        applySrcToBanners(FALLBACK_BANNER_IMG);
       };
       tester.src = cleanUrl;
     }
 
+    /* Обновление списка слайдов и перезапуск таймера ротации баннеров */
     function updateBannerList(newImages, newBannerMs) {
-      var list = newImages.length > 0 ? newImages : [LOCAL_FALLBACK_IMAGE];
-      var listChanged = list.join('|') !== activeBannerImages.join('|');
-      var intervalChanged = newBannerMs !== bannerIntervalMs;
+      var list = newImages.length > 0 ? newImages : [FALLBACK_BANNER_IMG];
+      var listChanged = list.join('|') !== bannerList.join('|');
+      var intervalChanged = newBannerMs !== bannerSwitchIntervalMs;
 
-      bannerIntervalMs = newBannerMs;
+      bannerSwitchIntervalMs = newBannerMs;
 
       if (listChanged) {
-        activeBannerImages = list;
-        currentBannerIndex = 0;
-        switchBannerSafely(getAt(activeBannerImages, 0));
-      } else if (activeBannerImages.length === 1) {
-        switchBannerSafely(getAt(activeBannerImages, 0));
+        bannerList = list;
+        activeBannerIdx = 0;
+        switchBannerSafely(getAt(bannerList, 0));
+      } else if (bannerList.length === 1) {
+        switchBannerSafely(getAt(bannerList, 0));
       }
 
       if (listChanged || intervalChanged) {
-        if (bannerTimer) {
-          clearInterval(bannerTimer);
-          bannerTimer = null;
+        if (bannerRotationTimer) {
+          clearInterval(bannerRotationTimer);
+          bannerRotationTimer = null;
         }
-        if (activeBannerImages.length > 1) {
-          bannerTimer = setInterval(function () {
-            currentBannerIndex = (currentBannerIndex + 1) % activeBannerImages.length;
-            switchBannerSafely(getAt(activeBannerImages, currentBannerIndex));
-          }, bannerIntervalMs);
+        if (bannerList.length > 1) {
+          bannerRotationTimer = setInterval(function () {
+            activeBannerIdx = (activeBannerIdx + 1) % bannerList.length;
+            switchBannerSafely(getAt(bannerList, activeBannerIdx));
+          }, bannerSwitchIntervalMs);
         }
       }
     }
 
+    /* Обновление интервала опроса таблицы */
     function restartUpdateTimer(newUpdateMs) {
-      if (newUpdateMs === updateIntervalMs && updateTimer) return;
-      updateIntervalMs = newUpdateMs;
+      if (newUpdateMs === dataRefreshIntervalMs && dataRefreshTimer) return;
+      dataRefreshIntervalMs = newUpdateMs;
 
-      if (updateTimer) {
-        clearInterval(updateTimer);
+      if (dataRefreshTimer) {
+        clearInterval(dataRefreshTimer);
       }
-      updateTimer = setInterval(updatePrices, updateIntervalMs);
+      dataRefreshTimer = setInterval(updatePrices, dataRefreshIntervalMs);
     }
 
+    /* ==========================================================================
+       8. ВАЛИДАЦИЯ, ФОРМАТИРОВАНИЕ И ОТРИСОВКА ТАБЛО ЦЕН
+       ========================================================================== */
     function hasValidPrice(rawPrice) {
       if (!rawPrice) return false;
       var cleaned = String(rawPrice).trim();
@@ -251,12 +289,14 @@
       return !isNaN(numeric) && numeric > 0;
     }
 
+    /* Приведение цены к единому формату с точкой и двумя знаками после запятой */
     function formatPrice(rawPrice) {
       var str = String(rawPrice).trim().replace(',', '.');
       var num = parseFloat(str);
       return !isNaN(num) ? num.toFixed(2) : str;
     }
 
+    /* Генерация HTML-разметки строк топлива */
     function buildRows(items) {
       var html = '';
       for (var i = 0; i < items.length; i++) {
@@ -275,6 +315,7 @@
       return html;
     }
 
+    /* Разбор одной строки CSV с учетом значений в кавычках */
     function parseCsvLine(line) {
       var result = [];
       var cur = '';
@@ -294,13 +335,14 @@
       return result;
     }
 
+    /* Основной парсер таблицы и обновление элементов интерфейса */
     function render(csvText) {
       if (!csvText || csvText.indexOf('fuel') === -1) return false;
       var lines = csvText.trim().split(/\r?\n/);
       var items = [];
       var parsedBanners = [];
-      var nextBannerMs = bannerIntervalMs;
-      var nextUpdateMs = updateIntervalMs;
+      var nextBannerMs = bannerSwitchIntervalMs;
+      var nextUpdateMs = dataRefreshIntervalMs;
 
       for (var i = 1; i < lines.length; i++) {
         var cols = parseCsvLine(getAt(lines, i));
@@ -316,6 +358,7 @@
           parsedBanners.push(imgUrl);
         }
 
+        /* Интервалы ротации баннеров и обновления таблицы считываются из первой строки данных */
         if (i === 1) {
           if (!isNaN(bannerSec) && bannerSec >= 2) {
             nextBannerMs = bannerSec * 1000;
@@ -325,6 +368,7 @@
           }
         }
 
+        /* Позиция выводится на экран только при наличии названия и корректной цены */
         if (fuel && hasValidPrice(price)) {
           items.push({
             fuel: fuel,
@@ -347,9 +391,12 @@
       return items.length > 0;
     }
 
+    /* ==========================================================================
+       9. ЗАГРУЗКА ДАННЫХ ИЗ GOOGLE ТАБЛИЦЫ И КЭШИРОВАНИЕ В LOCALSTORAGE
+       ========================================================================== */
     function tryUrlsSequentially(urls, index) {
       if (index >= urls.length) {
-        setStatus('Нет доступа к Google Таблице');
+        setStatus('Нет доступа к источнику данных');
         return;
       }
 
@@ -361,7 +408,7 @@
       xhr.onload = function () {
         if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText && xhr.responseText.indexOf('fuel') !== -1) {
           try {
-            localStorage.setItem(STORAGE_KEY, xhr.responseText);
+            localStorage.setItem(CACHE_STORAGE_KEY, xhr.responseText);
           } catch (e) {}
           render(xhr.responseText);
         } else {
@@ -380,8 +427,9 @@
       xhr.send();
     }
 
+    /* Запрос свежих данных: сначала напрямую, затем через резервные CORS-прокси */
     function updatePrices() {
-      var rawTarget = GOOGLE_CSV_URL + '&nocache=' + Date.now();
+      var rawTarget = SOURCE_CSV_URL + '&nocache=' + Date.now();
       var candidates = [
         rawTarget,
         'https://corsproxy.io/?' + encodeURIComponent(rawTarget),
@@ -390,16 +438,17 @@
       tryUrlsSequentially(candidates, 0);
     }
 
+    /* Инициализация при запуске виджета: загрузка из кэша + первый запрос к таблице */
     (function init() {
       try {
-        var cached = localStorage.getItem(STORAGE_KEY);
+        var cached = localStorage.getItem(CACHE_STORAGE_KEY);
         if (cached) {
           render(cached);
         }
       } catch (e) {}
 
       updatePrices();
-      updateTimer = setInterval(updatePrices, updateIntervalMs);
+      dataRefreshTimer = setInterval(updatePrices, dataRefreshIntervalMs);
     })();
   </script>
 </body>
